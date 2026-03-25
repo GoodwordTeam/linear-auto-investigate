@@ -10,7 +10,6 @@
 
 import fs from "fs";
 import { execSync } from "child_process";
-import { LinearClient } from "@linear/sdk";
 
 const LINEAR_API_KEY = process.env.LINEAR_API_KEY;
 const GH_PAT = process.env.GH_PAT;
@@ -28,7 +27,44 @@ if (!ticketId || !resultsFile) {
   process.exit(1);
 }
 
-const client = new LinearClient({ apiKey: LINEAR_API_KEY });
+/**
+ * Execute a Linear GraphQL mutation/query
+ */
+async function linearQuery(query, variables = {}) {
+  const res = await fetch("https://api.linear.app/graphql", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: LINEAR_API_KEY,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const json = await res.json();
+  if (json.errors) {
+    throw new Error(json.errors.map((e) => e.message).join(", "));
+  }
+  return json.data;
+}
+
+/**
+ * Find issue by identifier
+ */
+async function findIssue(identifier) {
+  const match = identifier.match(/^([A-Za-z]+)-(\d+)$/);
+  if (!match) throw new Error(`Invalid identifier: ${identifier}`);
+  const [, teamKey, numberStr] = match;
+
+  const data = await linearQuery(
+    `query($teamKey: String!, $number: Float!) {
+      issues(filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } }, first: 1) {
+        nodes { id identifier description }
+      }
+    }`,
+    { teamKey: teamKey.toUpperCase(), number: parseInt(numberStr, 10) }
+  );
+
+  return data.issues.nodes[0] || null;
+}
 
 /**
  * Parse investigation results to extract fix details
@@ -66,28 +102,13 @@ function determineTargetRepo(results) {
   const analysis = (results.technicalAnalysis || "").toLowerCase();
   const fix = (results.suggestedFix || "").toLowerCase();
 
-  // Check if it's primarily frontend or backend
   const frontendIndicators = [
-    "component",
-    "tsx",
-    "jsx",
-    "css",
-    "scss",
-    "react",
-    "next",
-    "pages/",
-    "src/components",
-    "web-app",
+    "component", "tsx", "jsx", "css", "scss", "react",
+    "next", "pages/", "src/components", "web-app",
   ];
   const backendIndicators = [
-    "controller",
-    "service",
-    "model",
-    "migration",
-    "endpoint",
-    "api/",
-    "routes/",
-    "middleware",
+    "controller", "service", "model", "migration",
+    "endpoint", "api/", "routes/", "middleware",
   ];
 
   let frontendScore = 0;
@@ -134,7 +155,6 @@ async function main() {
   try {
     exec(`git checkout -b ${branchName}`, { cwd: repoPath });
   } catch {
-    // Branch may already exist
     exec(`git checkout ${branchName}`, { cwd: repoPath });
   }
 
@@ -169,12 +189,11 @@ ${results.technicalAnalysis}
       {
         cwd: repoPath,
         env: { ...process.env },
-        timeout: 600000, // 10 minute timeout
+        timeout: 600000,
       }
     );
   } catch (error) {
     console.error(`Claude implementation failed: ${error.message}`);
-    // Still try to create PR if there are changes
   }
 
   // Check if there are any changes
@@ -235,30 +254,33 @@ Linear: ${results.ticketUrl || ticketId}`;
     console.log(`Draft PR created: ${prUrl}`);
 
     // Link the PR back to the Linear ticket
-    const match = ticketId.match(/^([A-Za-z]+)-(\d+)$/);
-    const lookupIssues = match
-      ? await client.issues({
-          filter: {
-            team: { key: { eq: match[1].toUpperCase() } },
-            number: { eq: parseInt(match[2], 10) },
-          },
-          first: 1,
-        })
-      : { nodes: [] };
-    const issue = lookupIssues.nodes[0];
+    const issue = await findIssue(ticketId);
     if (issue) {
-      await client.commentCreate({
-        issueId: issue.id,
-        body: `## 🍒 Draft PR Created\n\nA draft PR has been automatically created for this low-hanging fruit ticket:\n\n**[${prUrl}](${prUrl})**\n\nPlease review the changes before merging.\n\n---\n*Automated by linear-auto-investigate*`,
-      });
+      await linearQuery(
+        `mutation($issueId: String!, $body: String!) {
+          commentCreate(input: { issueId: $issueId, body: $body }) {
+            success
+          }
+        }`,
+        {
+          issueId: issue.id,
+          body: `## 🍒 Draft PR Created\n\nA draft PR has been automatically created for this low-hanging fruit ticket:\n\n**[${prUrl}](${prUrl})**\n\nPlease review the changes before merging.\n\n---\n*Automated by linear-auto-investigate*`,
+        }
+      );
 
-      // Also attach the PR URL to the issue
       const currentDesc = issue.description || "";
       if (!currentDesc.includes(prUrl)) {
-        await client.issueUpdate(issue.id, {
-          description:
-            currentDesc + `\n\n**Draft PR:** [${prUrl}](${prUrl})`,
-        });
+        await linearQuery(
+          `mutation($issueId: String!, $description: String!) {
+            issueUpdate(id: $issueId, input: { description: $description }) {
+              success
+            }
+          }`,
+          {
+            issueId: issue.id,
+            description: currentDesc + `\n\n**Draft PR:** [${prUrl}](${prUrl})`,
+          }
+        );
       }
       console.log(`Linked PR back to Linear ticket ${ticketId}`);
     }

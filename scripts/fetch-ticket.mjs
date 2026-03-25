@@ -8,8 +8,6 @@
  * Output: JSON object with ticket data and validation results
  */
 
-import { LinearClient } from "@linear/sdk";
-
 const LINEAR_API_KEY = process.env.LINEAR_API_KEY;
 if (!LINEAR_API_KEY) {
   console.error("ERROR: LINEAR_API_KEY environment variable is required");
@@ -22,22 +20,36 @@ if (!ticketId) {
   process.exit(1);
 }
 
-const client = new LinearClient({ apiKey: LINEAR_API_KEY });
+/**
+ * Execute a Linear GraphQL query
+ */
+async function linearQuery(query, variables = {}) {
+  const res = await fetch("https://api.linear.app/graphql", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: LINEAR_API_KEY,
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+  const json = await res.json();
+  if (json.errors) {
+    throw new Error(json.errors.map((e) => e.message).join(", "));
+  }
+  return json.data;
+}
 
 /**
  * Determines if a ticket is well-scoped enough for AI investigation.
- * Returns { wellScoped: boolean, skipReason?: string }
  */
 function validateTicketScope(issue) {
   const title = issue.title || "";
   const description = issue.description || "";
 
-  // Must have a title
   if (!title.trim()) {
     return { wellScoped: false, skipReason: "Ticket has no title" };
   }
 
-  // Title-only tickets with very short titles are not well-scoped
   if (title.length < 10 && !description.trim()) {
     return {
       wellScoped: false,
@@ -45,7 +57,6 @@ function validateTicketScope(issue) {
     };
   }
 
-  // Must have some description or be a clear bug report with Sentry link
   const hasSentryLink =
     description.includes("sentry.io") || title.includes("Sentry");
   if (!description.trim() && !hasSentryLink) {
@@ -56,20 +67,11 @@ function validateTicketScope(issue) {
     };
   }
 
-  // Tickets that are just epics/initiatives (too broad)
   const broadIndicators = [
-    "epic",
-    "initiative",
-    "roadmap",
-    "phase 1",
-    "phase 2",
-    "q1",
-    "q2",
-    "q3",
-    "q4",
+    "epic", "initiative", "roadmap",
+    "phase 1", "phase 2", "q1", "q2", "q3", "q4",
   ];
   const lowerTitle = title.toLowerCase();
-  const lowerDesc = description.toLowerCase();
   for (const indicator of broadIndicators) {
     if (lowerTitle.includes(indicator) && description.length < 100) {
       return {
@@ -79,7 +81,6 @@ function validateTicketScope(issue) {
     }
   }
 
-  // Tickets with just a question mark (exploratory)
   if (title.endsWith("?") && description.length < 50) {
     return {
       wellScoped: false,
@@ -88,7 +89,6 @@ function validateTicketScope(issue) {
     };
   }
 
-  // Check minimum substance in description (at least a sentence)
   const descWords = description.trim().split(/\s+/).length;
   if (descWords < 5 && !hasSentryLink) {
     return {
@@ -109,50 +109,47 @@ function extractSentryUrls(description) {
   return [...new Set(description.match(sentryRegex) || [])];
 }
 
-/**
- * Look up an issue by its identifier (e.g., "ENG-1447").
- * Parses the team key and issue number and uses a filter query
- * to avoid the issueSearch serialization bug.
- */
-async function findIssueByIdentifier(identifier) {
-  const match = identifier.match(/^([A-Za-z]+)-(\d+)$/);
-  if (!match) {
-    throw new Error(
-      `Invalid ticket identifier format: ${identifier}. Expected format: ENG-123`
-    );
-  }
-  const [, teamKey, numberStr] = match;
-  const number = parseInt(numberStr, 10);
-
-  const issues = await client.issues({
-    filter: {
-      team: { key: { eq: teamKey.toUpperCase() } },
-      number: { eq: number },
-    },
-    first: 1,
-  });
-
-  return issues.nodes[0] || null;
-}
-
 async function main() {
   try {
-    // Look up the issue by identifier (e.g., "ENG-1447")
-    const issue = await findIssueByIdentifier(ticketId);
+    const match = ticketId.match(/^([A-Za-z]+)-(\d+)$/);
+    if (!match) {
+      console.error(
+        `Invalid ticket identifier: ${ticketId}. Expected format: ENG-123`
+      );
+      process.exit(1);
+    }
+    const [, teamKey, numberStr] = match;
+    const number = parseInt(numberStr, 10);
 
+    const data = await linearQuery(
+      `query($teamKey: String!, $number: Float!) {
+        issues(filter: { team: { key: { eq: $teamKey } }, number: { eq: $number } }, first: 1) {
+          nodes {
+            id
+            identifier
+            title
+            description
+            priority
+            priorityLabel
+            url
+            team { id name }
+            labels { nodes { id name } }
+            assignee { name }
+            state { name }
+          }
+        }
+      }`,
+      { teamKey: teamKey.toUpperCase(), number }
+    );
+
+    const issue = data.issues.nodes[0];
     if (!issue) {
       console.error(`Ticket ${ticketId} not found`);
       process.exit(1);
     }
-    const team = await issue.team;
-    const labels = await issue.labels();
-    const assignee = await issue.assignee;
-    const state = await issue.state;
 
-    // Validate scope
     const validation = validateTicketScope(issue);
 
-    // Build output
     const output = {
       id: issue.id,
       identifier: issue.identifier,
@@ -160,11 +157,11 @@ async function main() {
       description: issue.description || "",
       priority: issue.priority,
       priorityLabel: issue.priorityLabel,
-      teamName: team?.name || "Unknown",
-      teamId: team?.id || null,
-      labels: labels.nodes.map((l) => l.name),
-      assignee: assignee?.name || null,
-      state: state?.name || null,
+      teamName: issue.team?.name || "Unknown",
+      teamId: issue.team?.id || null,
+      labels: (issue.labels?.nodes || []).map((l) => l.name),
+      assignee: issue.assignee?.name || null,
+      state: issue.state?.name || null,
       sentryUrls: extractSentryUrls(issue.description),
       url: issue.url,
       wellScoped: validation.wellScoped,
