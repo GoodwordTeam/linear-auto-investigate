@@ -109,19 +109,41 @@ function extractSentryUrls(description) {
   return [...new Set(description.match(sentryRegex) || [])];
 }
 
+/**
+ * Look up an issue by its identifier (e.g., "ENG-1447").
+ * Parses the team key and issue number and uses a filter query
+ * to avoid the issueSearch serialization bug.
+ */
+async function findIssueByIdentifier(identifier) {
+  const match = identifier.match(/^([A-Za-z]+)-(\d+)$/);
+  if (!match) {
+    throw new Error(
+      `Invalid ticket identifier format: ${identifier}. Expected format: ENG-123`
+    );
+  }
+  const [, teamKey, numberStr] = match;
+  const number = parseInt(numberStr, 10);
+
+  const issues = await client.issues({
+    filter: {
+      team: { key: { eq: teamKey.toUpperCase() } },
+      number: { eq: number },
+    },
+    first: 1,
+  });
+
+  return issues.nodes[0] || null;
+}
+
 async function main() {
   try {
-    // Search for the issue by identifier (e.g., "ENG-123")
-    const issues = await client.issueSearch(ticketId, { first: 1 });
-    const issueNode = issues.nodes[0];
+    // Look up the issue by identifier (e.g., "ENG-1447")
+    const issue = await findIssueByIdentifier(ticketId);
 
-    if (!issueNode) {
+    if (!issue) {
       console.error(`Ticket ${ticketId} not found`);
       process.exit(1);
     }
-
-    // Fetch full issue details
-    const issue = await client.issue(issueNode.id);
     const team = await issue.team;
     const labels = await issue.labels();
     const assignee = await issue.assignee;
