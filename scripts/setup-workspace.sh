@@ -9,6 +9,10 @@ mkdir -p "$WORKSPACE"
 
 echo "=== Setting up investigation workspace ==="
 
+# Configure git identity for automated commits
+git config --global user.email "linear-auto-investigate[bot]@users.noreply.github.com"
+git config --global user.name "Linear Auto-Investigate Bot"
+
 # Clone web-app repo
 if [ -n "${WEBAPP_REPO:-}" ]; then
   echo "Cloning web-app from $WEBAPP_REPO..."
