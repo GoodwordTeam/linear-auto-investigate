@@ -144,7 +144,6 @@ jobs:
           # Run Claude with the investigation prompt, streaming output to logs
           cd /tmp/workspace
           claude -p "$PROMPT" \
-            --output-format json \
             --model claude-sonnet-4-6 \
             --max-turns 30 \
             --allowedTools "Read,Glob,Grep,Bash(read-only),mcp__sentry__*,mcp__aws__*" \
