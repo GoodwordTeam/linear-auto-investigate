@@ -76,22 +76,26 @@ async function findIssue(identifier) {
 }
 
 /**
- * Parse the investigation results from Claude's output.
+ * Try to extract a JSON object containing "summary" from a string.
+ * Handles: pure JSON, JSON in code blocks, JSON embedded in prose,
+ * and Claude --output-format json envelopes.
  */
 function parseInvestigationResults(rawContent) {
   let content = rawContent;
 
+  // 1. Handle Claude --output-format json envelope: {"result":"..."}
   try {
     const parsed = JSON.parse(content);
     if (typeof parsed === "object" && parsed.result) {
-      content = parsed.result;
+      content = typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed.result);
     } else if (typeof parsed === "object" && parsed.summary) {
       return parsed;
     }
   } catch {
-    // Not JSON wrapper, continue
+    // Not a JSON wrapper, continue
   }
 
+  // 2. Try markdown code block: ```json ... ```
   const jsonBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (jsonBlockMatch) {
     try {
@@ -101,22 +105,63 @@ function parseInvestigationResults(rawContent) {
     }
   }
 
+  // 3. Try direct JSON parse
   try {
     return JSON.parse(content);
   } catch {
-    return {
-      summary: "Investigation completed (raw output)",
-      technicalAnalysis: content,
-      relevantFiles: [],
-      suggestedLabels: [],
-      estimatedComplexity: "medium",
-      isLowHangingFruit: false,
-      suggestedFix: null,
-      sentryFindings: null,
-      awsFindings: null,
-      additionalContext: null,
-    };
+    // Fall through
   }
+
+  // 4. Try to find a JSON object embedded in prose text
+  //    Look for { "summary": ... } pattern anywhere in the text
+  const inlineJsonMatch = content.match(/\{\s*"summary"\s*:\s*"[\s\S]*?"additionalContext"\s*:\s*(?:"[\s\S]*?"|null)\s*\}/);
+  if (inlineJsonMatch) {
+    try {
+      return JSON.parse(inlineJsonMatch[0]);
+    } catch {
+      // Fall through
+    }
+  }
+
+  // 5. More aggressive: find the first { that starts a "summary" key and match to the last }
+  const braceStart = content.indexOf('{"summary"');
+  if (braceStart === -1) {
+    // Also try with spaces: { "summary"
+    const spaceStart = content.indexOf('{   "summary"');
+    if (spaceStart !== -1) {
+      const lastBrace = content.lastIndexOf('}');
+      if (lastBrace > spaceStart) {
+        try {
+          return JSON.parse(content.slice(spaceStart, lastBrace + 1));
+        } catch {
+          // Fall through
+        }
+      }
+    }
+  } else {
+    const lastBrace = content.lastIndexOf('}');
+    if (lastBrace > braceStart) {
+      try {
+        return JSON.parse(content.slice(braceStart, lastBrace + 1));
+      } catch {
+        // Fall through
+      }
+    }
+  }
+
+  // 6. Fallback: return raw text as investigation
+  return {
+    summary: "Investigation completed (raw output)",
+    technicalAnalysis: content,
+    relevantFiles: [],
+    suggestedLabels: [],
+    estimatedComplexity: "medium",
+    isLowHangingFruit: false,
+    suggestedFix: null,
+    sentryFindings: null,
+    awsFindings: null,
+    additionalContext: null,
+  };
 }
 
 /**

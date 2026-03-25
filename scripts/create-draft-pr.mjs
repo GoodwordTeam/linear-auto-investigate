@@ -67,30 +67,52 @@ async function findIssue(identifier) {
 }
 
 /**
- * Parse investigation results to extract fix details
+ * Parse investigation results to extract fix details.
+ * Handles: pure JSON, JSON in code blocks, JSON embedded in prose,
+ * and Claude --output-format json envelopes.
  */
 function parseResults(filePath) {
-  const raw = fs.readFileSync(filePath, "utf8");
+  let content = fs.readFileSync(filePath, "utf8");
+
+  // 1. Handle Claude --output-format json envelope
   try {
-    const parsed = JSON.parse(raw);
+    const parsed = JSON.parse(content);
     if (typeof parsed === "object" && parsed.result) {
-      const jsonMatch = parsed.result.match(
-        /```(?:json)?\s*\n?([\s\S]*?)\n?```/
-      );
-      if (jsonMatch) return JSON.parse(jsonMatch[1]);
+      content = typeof parsed.result === "string" ? parsed.result : JSON.stringify(parsed.result);
+    } else if (typeof parsed === "object" && parsed.suggestedFix) {
+      return parsed;
     }
-    if (parsed.suggestedFix) return parsed;
   } catch {
-    // Try extracting from raw text
+    // Not a JSON wrapper
   }
-  const jsonMatch = raw.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
-  if (jsonMatch) {
+
+  // 2. Try markdown code block
+  const jsonBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
+  if (jsonBlockMatch) {
     try {
-      return JSON.parse(jsonMatch[1]);
-    } catch {
-      // Fall through
+      return JSON.parse(jsonBlockMatch[1]);
+    } catch { /* fall through */ }
+  }
+
+  // 3. Try direct JSON parse
+  try {
+    return JSON.parse(content);
+  } catch { /* fall through */ }
+
+  // 4. Find JSON embedded in prose — look for {"summary" or {   "summary"
+  const patterns = ['{"summary"', '{   "summary"', '{ "summary"'];
+  for (const pat of patterns) {
+    const start = content.indexOf(pat);
+    if (start !== -1) {
+      const lastBrace = content.lastIndexOf('}');
+      if (lastBrace > start) {
+        try {
+          return JSON.parse(content.slice(start, lastBrace + 1));
+        } catch { /* fall through */ }
+      }
     }
   }
+
   return null;
 }
 
