@@ -9,7 +9,7 @@
  */
 
 import fs from "fs";
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 
 const LINEAR_API_KEY = process.env.LINEAR_API_KEY;
 const GH_PAT = process.env.GH_PAT;
@@ -227,14 +227,18 @@ ${results.technicalAnalysis}
 `;
 
   try {
-    exec(
-      `claude -p ${JSON.stringify(implementPrompt)} --model claude-sonnet-4-6 --max-turns 20 --allowedTools "Read,Glob,Grep,Edit,Write,Bash"`,
-      {
-        cwd: repoPath,
-        env: { ...process.env },
-        timeout: 600000,
-      }
-    );
+    execFileSync("claude", [
+      "-p", implementPrompt,
+      "--model", "claude-sonnet-4-6",
+      "--max-turns", "20",
+      "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash",
+    ], {
+      cwd: repoPath,
+      env: { ...process.env },
+      timeout: 600000,
+      encoding: "utf8",
+      stdio: "inherit",
+    });
   } catch (error) {
     console.error(`Claude implementation failed: ${error.message}`);
   }
