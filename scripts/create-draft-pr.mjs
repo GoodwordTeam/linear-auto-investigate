@@ -144,12 +144,21 @@ async function createPRForRepo(repoName, branchName, results) {
 
   console.log(`Changes detected in ${repoName}, creating PR...`);
 
-  // Create branch
+  // Delete stale remote branch if it exists from a previous run
   try {
-    exec(`git checkout -b ${branchName}`, { cwd: repoPath });
+    exec(`git push origin --delete ${branchName}`, { cwd: repoPath });
+    console.log(`Deleted stale remote branch ${branchName}`);
   } catch {
-    exec(`git checkout ${branchName}`, { cwd: repoPath });
+    // Branch doesn't exist remotely, that's fine
   }
+
+  // Create branch (force reset if it already exists locally)
+  try {
+    exec(`git branch -D ${branchName}`, { cwd: repoPath });
+  } catch {
+    // Branch doesn't exist locally, that's fine
+  }
+  exec(`git checkout -b ${branchName}`, { cwd: repoPath });
 
   // Commit
   exec("git add -A", { cwd: repoPath });
