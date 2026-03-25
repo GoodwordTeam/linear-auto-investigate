@@ -1,0 +1,17 @@
+{
+  "name": "linear-auto-investigate",
+  "version": "1.0.0",
+  "description": "Automatic AI investigation workflow for Linear tickets using Claude",
+  "type": "module",
+  "scripts": {
+    "fetch-ticket": "node scripts/fetch-ticket.mjs",
+    "update-linear": "node scripts/update-linear.mjs",
+    "create-draft-pr": "node scripts/create-draft-pr.mjs"
+  },
+  "dependencies": {
+    "@linear/sdk": "^29.0.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

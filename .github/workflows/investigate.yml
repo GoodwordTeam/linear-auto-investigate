@@ -1,0 +1,185 @@
+name: Linear Ticket Investigation
+
+on:
+  # Triggered by Linear webhook via GitHub API repository_dispatch
+  repository_dispatch:
+    types: [linear-ticket-investigation]
+
+  # Manual trigger for testing
+  workflow_dispatch:
+    inputs:
+      ticket_id:
+        description: "Linear ticket ID (e.g., ABC-123)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+  pull-requests: write
+
+env:
+  LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+  ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+  SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+  SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
+  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  WEBAPP_REPO: ${{ vars.WEBAPP_REPO }}
+  API_REPO: ${{ vars.API_REPO }}
+
+jobs:
+  investigate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout investigation repo
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Determine ticket ID
+        id: ticket
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "ticket_id=${{ github.event.inputs.ticket_id }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "ticket_id=${{ github.event.client_payload.ticket_id }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch and validate ticket
+        id: validate
+        run: |
+          node scripts/fetch-ticket.mjs "${{ steps.ticket.outputs.ticket_id }}" > /tmp/ticket.json
+          echo "ticket_data<<EOF" >> "$GITHUB_OUTPUT"
+          cat /tmp/ticket.json >> "$GITHUB_OUTPUT"
+          echo "EOF" >> "$GITHUB_OUTPUT"
+
+          # Check if ticket is well-scoped
+          WELL_SCOPED=$(jq -r '.wellScoped' /tmp/ticket.json)
+          echo "well_scoped=$WELL_SCOPED" >> "$GITHUB_OUTPUT"
+
+          if [ "$WELL_SCOPED" = "false" ]; then
+            SKIP_REASON=$(jq -r '.skipReason' /tmp/ticket.json)
+            echo "skip_reason=$SKIP_REASON" >> "$GITHUB_OUTPUT"
+            echo "::warning::Ticket is not well-scoped: $SKIP_REASON"
+          fi
+
+      - name: Early exit for poorly-scoped tickets
+        if: steps.validate.outputs.well_scoped == 'false'
+        run: |
+          echo "Skipping investigation - ticket is not well-scoped."
+          echo "Reason: ${{ steps.validate.outputs.skip_reason }}"
+          # Post a comment back to Linear noting why we skipped
+          node scripts/update-linear.mjs "${{ steps.ticket.outputs.ticket_id }}" --skip "${{ steps.validate.outputs.skip_reason }}"
+
+      - name: Setup investigation workspace
+        if: steps.validate.outputs.well_scoped != 'false'
+        run: |
+          bash scripts/setup-workspace.sh
+
+      - name: Install Claude Code
+        if: steps.validate.outputs.well_scoped != 'false'
+        run: npm install -g @anthropic-ai/claude-code
+
+      - name: Run AI investigation
+        if: steps.validate.outputs.well_scoped != 'false'
+        id: investigate
+        run: |
+          TICKET_DATA=$(cat /tmp/ticket.json)
+          TICKET_TITLE=$(echo "$TICKET_DATA" | jq -r '.title')
+          TICKET_DESC=$(echo "$TICKET_DATA" | jq -r '.description')
+          TICKET_ID=$(echo "$TICKET_DATA" | jq -r '.identifier')
+          TEAM_NAME=$(echo "$TICKET_DATA" | jq -r '.teamName')
+          LABELS=$(echo "$TICKET_DATA" | jq -r '.labels | join(", ")')
+          SENTRY_URLS=$(echo "$TICKET_DATA" | jq -r '.sentryUrls // [] | join("\n")')
+          PRIORITY=$(echo "$TICKET_DATA" | jq -r '.priority')
+
+          # Build the investigation prompt
+          PROMPT=$(cat <<PROMPT_EOF
+          You are investigating Linear ticket ${TICKET_ID}: "${TICKET_TITLE}"
+
+          ## Ticket Details
+          - **Team**: ${TEAM_NAME}
+          - **Priority**: ${PRIORITY}
+          - **Labels**: ${LABELS}
+
+          ## Description
+          ${TICKET_DESC}
+
+          ## Sentry Error URLs (if any)
+          ${SENTRY_URLS}
+
+          ## Your Task
+
+          Investigate this ticket thoroughly following the instructions in CLAUDE.md.
+          The web-app repo is at /tmp/workspace/web-app and the api repo is at /tmp/workspace/api.
+
+          After investigation, output your findings as a single JSON object with this exact structure:
+          \`\`\`json
+          {
+            "summary": "Brief summary of findings",
+            "technicalAnalysis": "Detailed technical analysis",
+            "relevantFiles": ["list", "of", "relevant", "file", "paths"],
+            "suggestedLabels": ["label1", "label2"],
+            "estimatedComplexity": "low|medium|high",
+            "isLowHangingFruit": true/false,
+            "suggestedFix": "Description of the fix if low-hanging fruit, null otherwise",
+            "sentryFindings": "Any findings from Sentry investigation, null if N/A",
+            "awsFindings": "Any findings from AWS investigation, null if N/A",
+            "additionalContext": "Any other relevant context"
+          }
+          \`\`\`
+          PROMPT_EOF
+          )
+
+          # Run Claude with the investigation prompt
+          cd /tmp/workspace
+          RESULT=$(claude -p "$PROMPT" \
+            --output-format json \
+            --model claude-sonnet-4-6 \
+            --max-turns 30 \
+            --allowedTools "Read,Glob,Grep,Bash(read-only),mcp__sentry__*,mcp__aws__*" \
+            2>/dev/null) || true
+
+          # Extract the JSON result from Claude's output
+          echo "$RESULT" > /tmp/investigation-result.json
+
+      - name: Update Linear with findings
+        if: steps.validate.outputs.well_scoped != 'false'
+        run: |
+          node scripts/update-linear.mjs \
+            "${{ steps.ticket.outputs.ticket_id }}" \
+            --results /tmp/investigation-result.json
+
+      - name: Create draft PR if low-hanging fruit
+        if: steps.validate.outputs.well_scoped != 'false'
+        id: draft_pr
+        run: |
+          IS_LOW_HANGING=$(node -e "
+            import fs from 'fs';
+            try {
+              const r = JSON.parse(fs.readFileSync('/tmp/investigation-result.json','utf8'));
+              const text = typeof r === 'string' ? r : JSON.stringify(r);
+              const match = text.match(/\"isLowHangingFruit\"\s*:\s*(true|false)/);
+              console.log(match ? match[1] : 'false');
+            } catch { console.log('false'); }
+          ")
+
+          if [ "$IS_LOW_HANGING" = "true" ]; then
+            echo "low_hanging=true" >> "$GITHUB_OUTPUT"
+            node scripts/create-draft-pr.mjs \
+              "${{ steps.ticket.outputs.ticket_id }}" \
+              /tmp/investigation-result.json
+          else
+            echo "low_hanging=false" >> "$GITHUB_OUTPUT"
+            echo "Not low-hanging fruit - skipping draft PR creation"
+          fi
