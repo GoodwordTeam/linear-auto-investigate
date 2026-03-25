@@ -235,10 +235,18 @@ Linear: ${results.ticketUrl || ticketId}`;
     console.log(`Draft PR created: ${prUrl}`);
 
     // Link the PR back to the Linear ticket
-    const issues = await client.issueSearch(ticketId, { first: 1 });
-    const issueNode = issues.nodes[0];
-    if (issueNode) {
-      const issue = await client.issue(issueNode.id);
+    const match = ticketId.match(/^([A-Za-z]+)-(\d+)$/);
+    const lookupIssues = match
+      ? await client.issues({
+          filter: {
+            team: { key: { eq: match[1].toUpperCase() } },
+            number: { eq: parseInt(match[2], 10) },
+          },
+          first: 1,
+        })
+      : { nodes: [] };
+    const issue = lookupIssues.nodes[0];
+    if (issue) {
       await client.commentCreate({
         issueId: issue.id,
         body: `## 🍒 Draft PR Created\n\nA draft PR has been automatically created for this low-hanging fruit ticket:\n\n**[${prUrl}](${prUrl})**\n\nPlease review the changes before merging.\n\n---\n*Automated by linear-auto-investigate*`,

@@ -122,17 +122,36 @@ function formatComment(results) {
   return comment;
 }
 
+/**
+ * Look up an issue by its identifier (e.g., "ENG-1447").
+ */
+async function findIssueByIdentifier(identifier) {
+  const match = identifier.match(/^([A-Za-z]+)-(\d+)$/);
+  if (!match) {
+    throw new Error(`Invalid ticket identifier format: ${identifier}`);
+  }
+  const [, teamKey, numberStr] = match;
+  const number = parseInt(numberStr, 10);
+
+  const issues = await client.issues({
+    filter: {
+      team: { key: { eq: teamKey.toUpperCase() } },
+      number: { eq: number },
+    },
+    first: 1,
+  });
+
+  return issues.nodes[0] || null;
+}
+
 async function main() {
   try {
     // Find the issue
-    const issues = await client.issueSearch(ticketId, { first: 1 });
-    const issueNode = issues.nodes[0];
-    if (!issueNode) {
+    const issue = await findIssueByIdentifier(ticketId);
+    if (!issue) {
       console.error(`Ticket ${ticketId} not found`);
       process.exit(1);
     }
-
-    const issue = await client.issue(issueNode.id);
 
     if (flag === "--skip") {
       // Post a comment explaining why we skipped
