@@ -2,8 +2,8 @@
 
 /**
  * Creates a draft PR for low-hanging fruit tickets using Claude Code.
- * Runs Claude in the appropriate repo to implement the suggested fix,
- * then creates a draft PR and links it back to the Linear ticket.
+ * Runs Claude in the workspace root so it can access both web-app and api repos,
+ * then creates draft PRs for whichever repos have changes.
  *
  * Usage: node create-draft-pr.mjs <ticket-id> <results-file>
  */
@@ -26,6 +26,8 @@ if (!ticketId || !resultsFile) {
   console.error("Usage: node create-draft-pr.mjs <ticket-id> <results-file>");
   process.exit(1);
 }
+
+const WORKSPACE = "/tmp/workspace";
 
 /**
  * Execute a Linear GraphQL mutation/query
@@ -88,13 +90,10 @@ function findMatchingBrace(text, openPos) {
 
 /**
  * Parse investigation results to extract fix details.
- * Handles: pure JSON, JSON in code blocks, JSON embedded in prose,
- * and Claude --output-format json envelopes.
  */
 function parseResults(filePath) {
   let content = fs.readFileSync(filePath, "utf8");
 
-  // 1. Handle Claude --output-format json envelope
   try {
     const parsed = JSON.parse(content);
     if (typeof parsed === "object" && parsed.result) {
@@ -102,34 +101,22 @@ function parseResults(filePath) {
     } else if (typeof parsed === "object" && parsed.suggestedFix) {
       return parsed;
     }
-  } catch {
-    // Not a JSON wrapper
-  }
+  } catch { /* not a JSON wrapper */ }
 
-  // 2. Try markdown code block
   const jsonBlockMatch = content.match(/```(?:json)?\s*\n?([\s\S]*?)\n?```/);
   if (jsonBlockMatch) {
-    try {
-      return JSON.parse(jsonBlockMatch[1]);
-    } catch { /* fall through */ }
+    try { return JSON.parse(jsonBlockMatch[1]); } catch { /* fall through */ }
   }
 
-  // 3. Try direct JSON parse
-  try {
-    return JSON.parse(content);
-  } catch { /* fall through */ }
+  try { return JSON.parse(content); } catch { /* fall through */ }
 
-  // 4. Find JSON object with "summary" key embedded in text, using brace matching
   const summaryIdx = content.indexOf('"summary"');
   if (summaryIdx !== -1) {
-    // Walk backwards to find the opening brace
     let bracePos = content.lastIndexOf('{', summaryIdx);
     if (bracePos !== -1) {
       const closePos = findMatchingBrace(content, bracePos);
       if (closePos !== -1) {
-        try {
-          return JSON.parse(content.slice(bracePos, closePos + 1));
-        } catch { /* fall through */ }
+        try { return JSON.parse(content.slice(bracePos, closePos + 1)); } catch { /* fall through */ }
       }
     }
   }
@@ -137,141 +124,52 @@ function parseResults(filePath) {
   return null;
 }
 
-/**
- * Determine which repo to target based on relevant files
- */
-function determineTargetRepo(results) {
-  const files = results.relevantFiles || [];
-  const analysis = (results.technicalAnalysis || "").toLowerCase();
-  const fix = (results.suggestedFix || "").toLowerCase();
-
-  const frontendIndicators = [
-    "component", "tsx", "jsx", "css", "scss", "react",
-    "next", "pages/", "src/components", "web-app",
-  ];
-  const backendIndicators = [
-    "controller", "service", "model", "migration",
-    "endpoint", "api/", "routes/", "middleware",
-  ];
-
-  let frontendScore = 0;
-  let backendScore = 0;
-
-  const allText = files.join(" ") + " " + analysis + " " + fix;
-  for (const indicator of frontendIndicators) {
-    if (allText.includes(indicator)) frontendScore++;
-  }
-  for (const indicator of backendIndicators) {
-    if (allText.includes(indicator)) backendScore++;
-  }
-
-  return backendScore > frontendScore ? "api" : "web-app";
-}
-
 function exec(cmd, options = {}) {
   return execSync(cmd, { encoding: "utf8", ...options }).trim();
 }
 
-async function main() {
-  const results = parseResults(resultsFile);
-  if (!results || !results.isLowHangingFruit || !results.suggestedFix) {
-    console.log(
-      "Not a low-hanging fruit ticket or no suggested fix — skipping PR creation"
-    );
-    return;
+/**
+ * Create a branch, commit changes, push, and create a draft PR for a repo.
+ * Returns the PR URL or null.
+ */
+async function createPRForRepo(repoName, branchName, results) {
+  const repoPath = `${WORKSPACE}/${repoName}`;
+  if (!fs.existsSync(repoPath)) return null;
+
+  const status = exec("git status --porcelain", { cwd: repoPath });
+  if (!status.trim()) {
+    console.log(`No changes in ${repoName} — skipping`);
+    return null;
   }
 
-  const targetRepo = determineTargetRepo(results);
-  const repoPath = `/tmp/workspace/${targetRepo}`;
+  console.log(`Changes detected in ${repoName}, creating PR...`);
 
-  if (!fs.existsSync(repoPath)) {
-    console.error(`Target repo not found at ${repoPath}`);
-    process.exit(1);
-  }
-
-  // Create a branch for the fix
-  const branchName = `auto-fix/${ticketId.toLowerCase()}`;
-  console.log(
-    `Creating branch ${branchName} in ${targetRepo} for ${ticketId}...`
-  );
-
+  // Create branch
   try {
     exec(`git checkout -b ${branchName}`, { cwd: repoPath });
   } catch {
     exec(`git checkout ${branchName}`, { cwd: repoPath });
   }
 
-  // Run Claude to implement the fix
-  console.log("Running Claude to implement the fix...");
-  const implementPrompt = `
-You are implementing a fix for Linear ticket ${ticketId}.
-
-## Investigation Summary
-${results.summary}
-
-## Suggested Fix
-${results.suggestedFix}
-
-## Relevant Files
-${(results.relevantFiles || []).map((f) => `- ${f}`).join("\n")}
-
-## Technical Analysis
-${results.technicalAnalysis}
-
-## Instructions
-1. Implement the suggested fix
-2. Keep changes minimal and focused
-3. Follow existing code patterns and conventions
-4. Do NOT add unnecessary changes, comments, or refactoring
-5. Make sure the code compiles/lints correctly
-`;
-
-  try {
-    execFileSync("claude", [
-      "-p", implementPrompt,
-      "--model", "claude-sonnet-4-6",
-      "--max-turns", "20",
-      "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash",
-    ], {
-      cwd: repoPath,
-      env: { ...process.env },
-      timeout: 600000,
-      encoding: "utf8",
-      stdio: "inherit",
-    });
-  } catch (error) {
-    console.error(`Claude implementation failed: ${error.message}`);
-  }
-
-  // Check if there are any changes
-  const status = exec("git status --porcelain", { cwd: repoPath });
-  if (!status.trim()) {
-    console.log("No changes were made — skipping PR creation");
-    return;
-  }
-
-  // Commit the changes
+  // Commit
   exec("git add -A", { cwd: repoPath });
-  exec(
-    `git commit -m "Auto-fix: ${ticketId} - ${results.summary.slice(0, 60)}"`,
-    { cwd: repoPath }
-  );
+  const commitMsg = `Auto-fix: ${ticketId} - ${(results.summary || "").slice(0, 60)}`;
+  exec(`git commit -m ${JSON.stringify(commitMsg)}`, { cwd: repoPath });
 
-  // Push the branch
+  // Push
   exec(`git push -u origin ${branchName}`, { cwd: repoPath });
 
-  // Create draft PR via GitHub CLI
+  // Create draft PR via gh CLI
   const WEBAPP_REPO = process.env.WEBAPP_REPO || "";
   const API_REPO = process.env.API_REPO || "";
-  const ghRepo = targetRepo === "api" ? API_REPO : WEBAPP_REPO;
+  const ghRepo = repoName === "api" ? API_REPO : WEBAPP_REPO;
 
   if (!ghRepo) {
-    console.error(
-      `No GitHub repo configured for ${targetRepo}. Set WEBAPP_REPO or API_REPO env var.`
-    );
-    return;
+    console.error(`No GitHub repo configured for ${repoName}`);
+    return null;
   }
 
+  const prTitle = `Auto-fix: ${ticketId} - ${(results.summary || "").slice(0, 50)}`;
   const prBody = `## Auto-Investigation Fix for ${ticketId}
 
 ### Summary
@@ -285,24 +183,103 @@ ${(results.relevantFiles || []).map((f) => `- \`${f}\``).join("\n")}
 
 ### Complexity Assessment
 - **Estimated Complexity:** ${results.estimatedComplexity}
-- **Classification:** Low-hanging fruit 🍒
+- **Classification:** Low-hanging fruit
 
 ---
 *This draft PR was automatically generated by [linear-auto-investigate](https://github.com/${process.env.GITHUB_REPOSITORY || ""}). Please review carefully before merging.*
 
 Linear: ${results.ticketUrl || ticketId}`;
 
-  try {
-    const prUrl = exec(
-      `gh pr create --draft --repo "${ghRepo}" --title "Auto-fix: ${ticketId} - ${results.summary.slice(0, 50)}" --body ${JSON.stringify(prBody)} --head ${branchName}`,
-      { cwd: repoPath }
+  const prUrl = exec(
+    `gh pr create --draft --repo "${ghRepo}" --title ${JSON.stringify(prTitle)} --body ${JSON.stringify(prBody)} --head ${branchName}`,
+    { cwd: repoPath }
+  );
+
+  console.log(`Draft PR created for ${repoName}: ${prUrl}`);
+  return prUrl;
+}
+
+async function main() {
+  const results = parseResults(resultsFile);
+  if (!results || !results.isLowHangingFruit || !results.suggestedFix) {
+    console.log(
+      "Not a low-hanging fruit ticket or no suggested fix — skipping PR creation"
     );
+    return;
+  }
 
-    console.log(`Draft PR created: ${prUrl}`);
+  // Run Claude from the workspace root so it can access both repos.
+  // File paths like "api/libs/..." map to /tmp/workspace/api/libs/...
+  console.log("Running Claude to implement the fix...");
+  const implementPrompt = `You are implementing a fix for Linear ticket ${ticketId}.
 
-    // Link the PR back to the Linear ticket
+## Investigation Summary
+${results.summary}
+
+## Suggested Fix
+${results.suggestedFix}
+
+## Relevant Files
+${(results.relevantFiles || []).map((f) => `- ${f}`).join("\n")}
+
+## Technical Analysis
+${results.technicalAnalysis}
+
+## Workspace Layout
+The code is in two repos:
+- web-app/ — the frontend application
+- api/ — the backend API service
+
+File paths from the investigation (e.g., "api/libs/...") correspond directly to paths relative to this workspace root.
+
+## Instructions
+1. Use the Edit tool to make the changes described in the suggested fix
+2. Keep changes minimal and focused
+3. Follow existing code patterns and conventions
+4. Do NOT add unnecessary changes, comments, or refactoring
+5. Do NOT just describe changes — actually edit the files using the Edit tool
+`;
+
+  try {
+    execFileSync("claude", [
+      "-p", implementPrompt,
+      "--model", "claude-sonnet-4-6",
+      "--max-turns", "20",
+      "--allowedTools", "Read,Glob,Grep,Edit,Write,Bash",
+    ], {
+      cwd: WORKSPACE,
+      env: { ...process.env },
+      timeout: 600000,
+      encoding: "utf8",
+      stdio: "inherit",
+    });
+  } catch (error) {
+    console.error(`Claude implementation failed: ${error.message}`);
+  }
+
+  // Check both repos for changes and create PRs
+  const branchName = `auto-fix/${ticketId.toLowerCase()}`;
+  const prUrls = [];
+
+  for (const repoName of ["api", "web-app"]) {
+    try {
+      const prUrl = await createPRForRepo(repoName, branchName, results);
+      if (prUrl) prUrls.push(prUrl);
+    } catch (error) {
+      console.error(`Failed to create PR for ${repoName}: ${error.message}`);
+    }
+  }
+
+  if (prUrls.length === 0) {
+    console.log("No changes were made in either repo — skipping PR creation");
+    return;
+  }
+
+  // Link PRs back to the Linear ticket
+  try {
     const issue = await findIssue(ticketId);
     if (issue) {
+      const prLinks = prUrls.map((url) => `- [${url}](${url})`).join("\n");
       await linearQuery(
         `mutation($issueId: String!, $body: String!) {
           commentCreate(input: { issueId: $issueId, body: $body }) {
@@ -311,12 +288,13 @@ Linear: ${results.ticketUrl || ticketId}`;
         }`,
         {
           issueId: issue.id,
-          body: `## 🍒 Draft PR Created\n\nA draft PR has been automatically created for this low-hanging fruit ticket:\n\n**[${prUrl}](${prUrl})**\n\nPlease review the changes before merging.\n\n---\n*Automated by linear-auto-investigate*`,
+          body: `## Draft PR Created\n\nDraft PR(s) have been automatically created for this low-hanging fruit ticket:\n\n${prLinks}\n\nPlease review the changes before merging.\n\n---\n*Automated by linear-auto-investigate*`,
         }
       );
 
       const currentDesc = issue.description || "";
-      if (!currentDesc.includes(prUrl)) {
+      const prLinksText = prUrls.map((url) => `[${url}](${url})`).join(", ");
+      if (!currentDesc.includes(prUrls[0])) {
         await linearQuery(
           `mutation($issueId: String!, $description: String!) {
             issueUpdate(id: $issueId, input: { description: $description }) {
@@ -325,14 +303,14 @@ Linear: ${results.ticketUrl || ticketId}`;
           }`,
           {
             issueId: issue.id,
-            description: currentDesc + `\n\n**Draft PR:** [${prUrl}](${prUrl})`,
+            description: currentDesc + `\n\n**Draft PR:** ${prLinksText}`,
           }
         );
       }
-      console.log(`Linked PR back to Linear ticket ${ticketId}`);
+      console.log(`Linked PR(s) back to Linear ticket ${ticketId}`);
     }
   } catch (error) {
-    console.error(`Failed to create PR: ${error.message}`);
+    console.error(`Failed to link PR to Linear: ${error.message}`);
   }
 }
 
