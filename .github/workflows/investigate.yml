@@ -141,13 +141,15 @@ jobs:
           PROMPT_EOF
           )
 
-          # Run Claude with the investigation prompt, streaming output to logs
+          # Run Claude with the investigation prompt
           cd /tmp/workspace
           claude -p "$PROMPT" \
             --model claude-sonnet-4-6 \
             --max-turns 30 \
             --allowedTools "Read,Glob,Grep,Bash(read-only),mcp__sentry__*,mcp__aws__*" \
-            2>&1 | tee /tmp/investigation-result.json || true
+            > /tmp/investigation-result.json 2>/dev/null || true
+          echo "=== Investigation result ==="
+          cat /tmp/investigation-result.json
 
       - name: Update Linear with findings
         if: steps.validate.outputs.well_scoped != 'false'

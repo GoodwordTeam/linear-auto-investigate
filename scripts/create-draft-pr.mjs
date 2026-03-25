@@ -67,6 +67,26 @@ async function findIssue(identifier) {
 }
 
 /**
+ * Find the matching closing brace for an opening brace, respecting
+ * nesting and JSON string escaping.
+ */
+function findMatchingBrace(text, openPos) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = openPos; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    if (ch === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/**
  * Parse investigation results to extract fix details.
  * Handles: pure JSON, JSON in code blocks, JSON embedded in prose,
  * and Claude --output-format json envelopes.
@@ -99,15 +119,16 @@ function parseResults(filePath) {
     return JSON.parse(content);
   } catch { /* fall through */ }
 
-  // 4. Find JSON embedded in prose — look for {"summary" or {   "summary"
-  const patterns = ['{"summary"', '{   "summary"', '{ "summary"'];
-  for (const pat of patterns) {
-    const start = content.indexOf(pat);
-    if (start !== -1) {
-      const lastBrace = content.lastIndexOf('}');
-      if (lastBrace > start) {
+  // 4. Find JSON object with "summary" key embedded in text, using brace matching
+  const summaryIdx = content.indexOf('"summary"');
+  if (summaryIdx !== -1) {
+    // Walk backwards to find the opening brace
+    let bracePos = content.lastIndexOf('{', summaryIdx);
+    if (bracePos !== -1) {
+      const closePos = findMatchingBrace(content, bracePos);
+      if (closePos !== -1) {
         try {
-          return JSON.parse(content.slice(start, lastBrace + 1));
+          return JSON.parse(content.slice(bracePos, closePos + 1));
         } catch { /* fall through */ }
       }
     }

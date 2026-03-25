@@ -76,6 +76,26 @@ async function findIssue(identifier) {
 }
 
 /**
+ * Find the matching closing brace for an opening brace, respecting
+ * nesting and JSON string escaping.
+ */
+function findMatchingBrace(text, openPos) {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = openPos; i < text.length; i++) {
+    const ch = text[i];
+    if (escaped) { escaped = false; continue; }
+    if (ch === '\\' && inString) { escaped = true; continue; }
+    if (ch === '"') { inString = !inString; continue; }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    if (ch === '}') { depth--; if (depth === 0) return i; }
+  }
+  return -1;
+}
+
+/**
  * Try to extract a JSON object containing "summary" from a string.
  * Handles: pure JSON, JSON in code blocks, JSON embedded in prose,
  * and Claude --output-format json envelopes.
@@ -112,44 +132,23 @@ function parseInvestigationResults(rawContent) {
     // Fall through
   }
 
-  // 4. Try to find a JSON object embedded in prose text
-  //    Look for { "summary": ... } pattern anywhere in the text
-  const inlineJsonMatch = content.match(/\{\s*"summary"\s*:\s*"[\s\S]*?"additionalContext"\s*:\s*(?:"[\s\S]*?"|null)\s*\}/);
-  if (inlineJsonMatch) {
-    try {
-      return JSON.parse(inlineJsonMatch[0]);
-    } catch {
-      // Fall through
-    }
-  }
-
-  // 5. More aggressive: find the first { that starts a "summary" key and match to the last }
-  const braceStart = content.indexOf('{"summary"');
-  if (braceStart === -1) {
-    // Also try with spaces: { "summary"
-    const spaceStart = content.indexOf('{   "summary"');
-    if (spaceStart !== -1) {
-      const lastBrace = content.lastIndexOf('}');
-      if (lastBrace > spaceStart) {
+  // 4. Find JSON object with "summary" key embedded in text, using brace matching
+  const summaryIdx = content.indexOf('"summary"');
+  if (summaryIdx !== -1) {
+    const bracePos = content.lastIndexOf('{', summaryIdx);
+    if (bracePos !== -1) {
+      const closePos = findMatchingBrace(content, bracePos);
+      if (closePos !== -1) {
         try {
-          return JSON.parse(content.slice(spaceStart, lastBrace + 1));
+          return JSON.parse(content.slice(bracePos, closePos + 1));
         } catch {
           // Fall through
         }
       }
     }
-  } else {
-    const lastBrace = content.lastIndexOf('}');
-    if (lastBrace > braceStart) {
-      try {
-        return JSON.parse(content.slice(braceStart, lastBrace + 1));
-      } catch {
-        // Fall through
-      }
-    }
   }
 
-  // 6. Fallback: return raw text as investigation
+  // 5. Fallback: return raw text as investigation
   return {
     summary: "Investigation completed (raw output)",
     technicalAnalysis: content,
