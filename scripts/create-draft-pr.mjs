@@ -13,7 +13,7 @@ import { execSync } from "child_process";
 import { LinearClient } from "@linear/sdk";
 
 const LINEAR_API_KEY = process.env.LINEAR_API_KEY;
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN;
+const GH_PAT = process.env.GH_PAT;
 
 if (!LINEAR_API_KEY) {
   console.error("ERROR: LINEAR_API_KEY environment variable is required");

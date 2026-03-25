@@ -17,7 +17,7 @@ if [ -n "${WEBAPP_REPO:-}" ]; then
     cd "$WORKSPACE/web-app" && git pull origin main || git pull origin master || true
     cd -
   else
-    git clone --depth 50 "https://x-access-token:${GITHUB_TOKEN}@github.com/${WEBAPP_REPO}.git" "$WORKSPACE/web-app"
+    git clone --depth 50 "https://x-access-token:${GH_PAT}@github.com/${WEBAPP_REPO}.git" "$WORKSPACE/web-app"
   fi
   echo "web-app cloned successfully"
 else
@@ -32,7 +32,7 @@ if [ -n "${API_REPO:-}" ]; then
     cd "$WORKSPACE/api" && git pull origin main || git pull origin master || true
     cd -
   else
-    git clone --depth 50 "https://x-access-token:${GITHUB_TOKEN}@github.com/${API_REPO}.git" "$WORKSPACE/api"
+    git clone --depth 50 "https://x-access-token:${GH_PAT}@github.com/${API_REPO}.git" "$WORKSPACE/api"
   fi
   echo "api cloned successfully"
 else

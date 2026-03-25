@@ -25,7 +25,7 @@ env:
   AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
   AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
   AWS_DEFAULT_REGION: ${{ secrets.AWS_DEFAULT_REGION }}
-  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+  GH_PAT: ${{ secrets.GH_PAT }}
   WEBAPP_REPO: ${{ vars.WEBAPP_REPO }}
   API_REPO: ${{ vars.API_REPO }}
 
