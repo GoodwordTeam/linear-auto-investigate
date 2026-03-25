@@ -141,17 +141,14 @@ jobs:
           PROMPT_EOF
           )
 
-          # Run Claude with the investigation prompt
+          # Run Claude with the investigation prompt, streaming output to logs
           cd /tmp/workspace
-          RESULT=$(claude -p "$PROMPT" \
+          claude -p "$PROMPT" \
             --output-format json \
             --model claude-sonnet-4-6 \
             --max-turns 30 \
             --allowedTools "Read,Glob,Grep,Bash(read-only),mcp__sentry__*,mcp__aws__*" \
-            2>/dev/null) || true
-
-          # Extract the JSON result from Claude's output
-          echo "$RESULT" > /tmp/investigation-result.json
+            2>&1 | tee /tmp/investigation-result.json || true
 
       - name: Update Linear with findings
         if: steps.validate.outputs.well_scoped != 'false'
