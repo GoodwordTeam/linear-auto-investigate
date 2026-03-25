@@ -71,7 +71,18 @@ async function triggerInvestigation(ticketId, ticketData) {
 }
 
 /**
- * Determine if a ticket should be investigated
+ * Check if an issue has a specific label
+ */
+function hasLabel(data, labelName) {
+  const labels = data.labels || [];
+  return labels.some(
+    (l) => (l.name || "").toLowerCase() === labelName.toLowerCase()
+  );
+}
+
+/**
+ * Determine if a ticket should be investigated.
+ * Only triggers for issues with the "Bug" label.
  */
 function shouldInvestigate(payload) {
   const { action, data, type } = payload;
@@ -79,13 +90,23 @@ function shouldInvestigate(payload) {
   // Only handle issue events
   if (type !== "Issue") return false;
 
+  // Must have the "Bug" label
+  if (!hasLabel(data, "Bug")) {
+    console.log(
+      `Skipping ${data.identifier}: no "Bug" label (labels: ${(data.labels || []).map((l) => l.name).join(", ") || "none"})`
+    );
+    return false;
+  }
+
   // Investigate on creation
   if (action === "create") return true;
 
-  // Investigate on update if the ticket was just moved to a "ready" state
+  // Investigate on update if a label was just added (could be Bug label added later)
   if (action === "update") {
     const updatedFields = payload.updatedFrom || {};
-    // Trigger if state changed (e.g., moved to "Todo" or "In Progress")
+    // Trigger if labels changed (Bug label may have just been added)
+    if (updatedFields.labelIds !== undefined) return true;
+    // Trigger if state changed to a ready state
     if (updatedFields.stateId !== undefined) {
       const newState = (data.state?.name || "").toLowerCase();
       const investigateStates = ["todo", "ready", "in progress", "backlog"];
