@@ -161,22 +161,14 @@ jobs:
         if: steps.validate.outputs.well_scoped != 'false'
         id: draft_pr
         run: |
-          IS_LOW_HANGING=$(node -e "
-            import fs from 'fs';
-            try {
-              const r = JSON.parse(fs.readFileSync('/tmp/investigation-result.json','utf8'));
-              const text = typeof r === 'string' ? r : JSON.stringify(r);
-              const match = text.match(/\"isLowHangingFruit\"\s*:\s*(true|false)/);
-              console.log(match ? match[1] : 'false');
-            } catch { console.log('false'); }
-          ")
-
-          if [ "$IS_LOW_HANGING" = "true" ]; then
+          # Check if the investigation result contains isLowHangingFruit: true
+          if grep -qE '"isLowHangingFruit"\s*:\s*true' /tmp/investigation-result.json; then
             echo "low_hanging=true" >> "$GITHUB_OUTPUT"
+            echo "Detected low-hanging fruit — creating draft PR..."
             node scripts/create-draft-pr.mjs \
               "${{ steps.ticket.outputs.ticket_id }}" \
               /tmp/investigation-result.json
           else
             echo "low_hanging=false" >> "$GITHUB_OUTPUT"
-            echo "Not low-hanging fruit - skipping draft PR creation"
+            echo "Not low-hanging fruit — skipping draft PR creation"
           fi
