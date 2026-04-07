@@ -63,12 +63,14 @@ jobs:
           cat /tmp/ticket.json >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-          # Check if ticket has the "Bug" label (required for auto-investigation)
-          HAS_BUG_LABEL=$(jq -r '.labels | map(ascii_downcase) | any(. == "bug")' /tmp/ticket.json)
-          echo "has_bug_label=$HAS_BUG_LABEL" >> "$GITHUB_OUTPUT"
-
-          if [ "$HAS_BUG_LABEL" = "false" ]; then
-            echo "::warning::Ticket does not have the Bug label — skipping investigation"
+          # Check if ticket is in a trigger state (Triage or Bug)
+          TICKET_STATE=$(jq -r '.state // "unknown"' /tmp/ticket.json)
+          TICKET_STATE_LOWER=$(echo "$TICKET_STATE" | tr '[:upper:]' '[:lower:]')
+          if [ "$TICKET_STATE_LOWER" = "triage" ] || [ "$TICKET_STATE_LOWER" = "bug" ]; then
+            echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Ticket is in \"$TICKET_STATE\" state — proceeding (triggered via dispatch)"
           fi
 
           # Check if ticket is well-scoped
@@ -81,13 +83,8 @@ jobs:
             echo "::warning::Ticket is not well-scoped: $SKIP_REASON"
           fi
 
-      - name: Skip if no Bug label
-        if: steps.validate.outputs.has_bug_label == 'false'
-        run: |
-          echo "Ticket does not have the Bug label — skipping investigation."
-
       - name: Early exit for poorly-scoped tickets
-        if: steps.validate.outputs.has_bug_label != 'false' && steps.validate.outputs.well_scoped == 'false'
+        if: steps.validate.outputs.well_scoped == 'false'
         run: |
           echo "Skipping investigation - ticket is not well-scoped."
           echo "Reason: ${{ steps.validate.outputs.skip_reason }}"
@@ -95,16 +92,16 @@ jobs:
           node scripts/update-linear.mjs "${{ steps.ticket.outputs.ticket_id }}" --skip "${{ steps.validate.outputs.skip_reason }}"
 
       - name: Setup investigation workspace
-        if: steps.validate.outputs.has_bug_label != 'false' && steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.well_scoped != 'false'
         run: |
           bash scripts/setup-workspace.sh
 
       - name: Install Claude Code
-        if: steps.validate.outputs.has_bug_label != 'false' && steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.well_scoped != 'false'
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Run AI investigation
-        if: steps.validate.outputs.has_bug_label != 'false' && steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.well_scoped != 'false'
         id: investigate
         run: |
           TICKET_DATA=$(cat /tmp/ticket.json)
@@ -165,14 +162,14 @@ jobs:
           cat /tmp/investigation-result.json
 
       - name: Update Linear with findings
-        if: steps.validate.outputs.has_bug_label != 'false' && steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.well_scoped != 'false'
         run: |
           node scripts/update-linear.mjs \
             "${{ steps.ticket.outputs.ticket_id }}" \
             --results /tmp/investigation-result.json
 
       - name: Create draft PR if low-hanging fruit
-        if: steps.validate.outputs.has_bug_label != 'false' && steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.well_scoped != 'false'
         id: draft_pr
         run: |
           # Check if the investigation result contains isLowHangingFruit: true
