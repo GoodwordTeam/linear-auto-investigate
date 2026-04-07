@@ -71,18 +71,22 @@ async function triggerInvestigation(ticketId, ticketData) {
 }
 
 /**
- * Check if an issue has a specific label
+ * Workflow states that should trigger an investigation.
+ * Matches case-insensitively against the Linear state name.
  */
-function hasLabel(data, labelName) {
-  const labels = data.labels || [];
-  return labels.some(
-    (l) => (l.name || "").toLowerCase() === labelName.toLowerCase()
-  );
+const TRIGGER_STATES = ["triage", "bug"];
+
+/**
+ * Check if the issue's current state matches a trigger state
+ */
+function isInTriggerState(data) {
+  const stateName = (data.state?.name || "").toLowerCase();
+  return TRIGGER_STATES.some((s) => stateName === s);
 }
 
 /**
  * Determine if a ticket should be investigated.
- * Only triggers for issues with the "Bug" label.
+ * Triggers when an issue is created in or moved to a trigger state (Triage, Bug).
  */
 function shouldInvestigate(payload) {
   const { action, data, type } = payload;
@@ -90,27 +94,24 @@ function shouldInvestigate(payload) {
   // Only handle issue events
   if (type !== "Issue") return false;
 
-  // Must have the "Bug" label
-  if (!hasLabel(data, "Bug")) {
-    console.log(
-      `Skipping ${data.identifier}: no "Bug" label (labels: ${(data.labels || []).map((l) => l.name).join(", ") || "none"})`
-    );
+  const stateName = data.state?.name || "unknown";
+
+  // Investigate on creation if already in a trigger state
+  if (action === "create") {
+    if (isInTriggerState(data)) {
+      console.log(`Triggering: ${data.identifier} created in "${stateName}" state`);
+      return true;
+    }
+    console.log(`Skipping ${data.identifier}: created in "${stateName}" state (not a trigger state)`);
     return false;
   }
 
-  // Investigate on creation
-  if (action === "create") return true;
-
-  // Investigate on update if a label was just added (could be Bug label added later)
+  // Investigate on update if state changed to a trigger state
   if (action === "update") {
     const updatedFields = payload.updatedFrom || {};
-    // Trigger if labels changed (Bug label may have just been added)
-    if (updatedFields.labelIds !== undefined) return true;
-    // Trigger if state changed to a ready state
-    if (updatedFields.stateId !== undefined) {
-      const newState = (data.state?.name || "").toLowerCase();
-      const investigateStates = ["todo", "ready", "in progress", "backlog"];
-      return investigateStates.some((s) => newState.includes(s));
+    if (updatedFields.stateId !== undefined && isInTriggerState(data)) {
+      console.log(`Triggering: ${data.identifier} moved to "${stateName}" state`);
+      return true;
     }
   }
 
