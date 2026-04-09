@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - "lambda/**"
+      - "infra/**"
       - ".github/workflows/deploy-lambda.yml"
 
   workflow_dispatch:
@@ -13,17 +14,24 @@ permissions:
   contents: read
 
 env:
-  FUNCTION_NAME: linear-webhook-handler
   AWS_REGION: us-east-1
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install CDK dependencies
+        run: cd infra && npm ci
 
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
@@ -32,36 +40,14 @@ jobs:
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Package Lambda
-        run: |
-          cd lambda
-          zip -j /tmp/lambda.zip index.mjs
+      - name: CDK deploy
+        env:
+          LINEAR_WEBHOOK_SECRET: ${{ secrets.LINEAR_WEBHOOK_SECRET }}
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          GITHUB_REPO: ${{ github.repository }}
+        run: cd infra && npx cdk deploy --require-approval never --outputs-file /tmp/cdk-outputs.json
 
-      - name: Deploy to Lambda
+      - name: Show outputs
         run: |
-          aws lambda update-function-code \
-            --function-name "$FUNCTION_NAME" \
-            --zip-file fileb:///tmp/lambda.zip \
-            --publish \
-            --no-cli-pager
-
-      - name: Update environment variables
-        run: |
-          aws lambda update-function-configuration \
-            --function-name "$FUNCTION_NAME" \
-            --environment "Variables={LINEAR_WEBHOOK_SECRET=${{ secrets.LINEAR_WEBHOOK_SECRET }},GITHUB_TOKEN=${{ secrets.GH_PAT }},GITHUB_REPO=${{ github.repository }}}" \
-            --no-cli-pager
-
-      - name: Wait for update to complete
-        run: |
-          aws lambda wait function-updated \
-            --function-name "$FUNCTION_NAME"
-
-      - name: Verify deployment
-        run: |
-          FUNCTION_URL=$(aws lambda get-function-url-config \
-            --function-name "$FUNCTION_NAME" \
-            --query 'FunctionUrl' --output text 2>/dev/null || echo "No Function URL configured")
           echo "### Deployed successfully" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **Function**: $FUNCTION_NAME" >> "$GITHUB_STEP_SUMMARY"
-          echo "- **URL**: $FUNCTION_URL" >> "$GITHUB_STEP_SUMMARY"
+          cat /tmp/cdk-outputs.json >> "$GITHUB_STEP_SUMMARY"

@@ -3,3 +3,7 @@ node_modules/
 .env.local
 *.log
 /tmp/
+infra/dist/
+infra/node_modules/
+cdk.out/
+infra/cdk.out/
