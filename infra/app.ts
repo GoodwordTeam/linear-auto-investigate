@@ -6,8 +6,7 @@ const app = new cdk.App();
 
 new LinearWebhookStack(app, "LinearWebhookStack", {
   env: {
-    account: process.env.CDK_DEFAULT_ACCOUNT,
-    region: process.env.CDK_DEFAULT_REGION || "us-east-1",
+    region: "us-east-2",
   },
   linearWebhookSecret: process.env.LINEAR_WEBHOOK_SECRET!,
   githubToken: process.env.GITHUB_TOKEN!,
