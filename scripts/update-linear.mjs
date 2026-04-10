@@ -174,12 +174,20 @@ function formatComment(results) {
     comment += `### Technical Analysis\n${results.technicalAnalysis}\n\n`;
   }
 
+  if (results.startingPoint) {
+    comment += `### Where to Start\n${results.startingPoint}\n\n`;
+  }
+
   if (results.relevantFiles?.length > 0) {
     comment += `### Relevant Files\n`;
     for (const file of results.relevantFiles) {
       comment += `- \`${file}\`\n`;
     }
     comment += "\n";
+  }
+
+  if (results.existingPatterns) {
+    comment += `### Existing Patterns to Follow\n${results.existingPatterns}\n\n`;
   }
 
   if (results.sentryFindings) {
@@ -193,6 +201,9 @@ function formatComment(results) {
   comment += `### Assessment\n`;
   comment += `- **Estimated Complexity:** ${results.estimatedComplexity || "Unknown"}\n`;
   comment += `- **Low-Hanging Fruit:** ${results.isLowHangingFruit ? "Yes ✅" : "No"}\n`;
+  if (results.isLowHangingFruit && results.lowHangingFruitReason) {
+    comment += `- **Reason:** ${results.lowHangingFruitReason}\n`;
+  }
 
   if (results.suggestedFix) {
     comment += `\n### Suggested Fix\n${results.suggestedFix}\n`;

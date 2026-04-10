@@ -133,15 +133,22 @@ jobs:
           Investigate this ticket thoroughly following the instructions in CLAUDE.md.
           The web-app repo is at /tmp/workspace/web-app and the api repo is at /tmp/workspace/api.
 
+          Your audience is a junior engineer who will pick up this ticket. Write your analysis so they know exactly where to start and what to change.
+
+          Be conservative with the isLowHangingFruit field — only set it to true if the change is a simple UX update, straightforward API change, or small feature that replicates an existing pattern in the codebase. When in doubt, set it to false.
+
           After investigation, output your findings as a single JSON object with this exact structure:
           \`\`\`json
           {
             "summary": "Brief summary of findings",
             "technicalAnalysis": "Detailed technical analysis",
+            "startingPoint": "Where to start: specific file(s), function(s), and what to look at first. Written for a junior engineer.",
             "relevantFiles": ["list", "of", "relevant", "file", "paths"],
+            "existingPatterns": "If there's a similar feature/fix in the codebase that can serve as a reference, describe it with file paths. null if N/A",
             "suggestedLabels": ["label1", "label2"],
             "estimatedComplexity": "low|medium|high",
             "isLowHangingFruit": true/false,
+            "lowHangingFruitReason": "If isLowHangingFruit is true, explain which strict criterion it meets (simple UX update / straightforward API change / replicates existing pattern) and cite the existing pattern. null if not low-hanging fruit.",
             "suggestedFix": "Description of the fix if low-hanging fruit, null otherwise",
             "sentryFindings": "Any findings from Sentry investigation, null if N/A",
             "awsFindings": "Any findings from AWS investigation, null if N/A",
