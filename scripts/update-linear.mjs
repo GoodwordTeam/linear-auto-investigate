@@ -167,53 +167,46 @@ function parseInvestigationResults(rawContent) {
  * Format investigation results as a Linear comment
  */
 function formatComment(results) {
-  let comment = `## 🔍 AI Investigation Results\n\n`;
-  comment += `**Summary:** ${results.summary}\n\n`;
-
-  if (results.technicalAnalysis) {
-    comment += `### Technical Analysis\n${results.technicalAnalysis}\n\n`;
-  }
+  let comment = `## 🔍 AI Scoping\n\n`;
+  comment += `${results.summary}\n\n`;
 
   if (results.startingPoint) {
-    comment += `### Where to Start\n${results.startingPoint}\n\n`;
+    comment += `**Start here:** ${results.startingPoint}\n\n`;
+  }
+
+  if (results.technicalAnalysis) {
+    comment += `**Analysis:** ${results.technicalAnalysis}\n\n`;
   }
 
   if (results.relevantFiles?.length > 0) {
-    comment += `### Relevant Files\n`;
-    for (const file of results.relevantFiles) {
-      comment += `- \`${file}\`\n`;
-    }
-    comment += "\n";
+    const files = results.relevantFiles.slice(0, 5).map((f) => `\`${f}\``).join(", ");
+    comment += `**Files:** ${files}\n\n`;
   }
 
   if (results.existingPatterns) {
-    comment += `### Existing Patterns to Follow\n${results.existingPatterns}\n\n`;
+    comment += `**Pattern:** ${results.existingPatterns}\n\n`;
   }
 
   if (results.sentryFindings) {
-    comment += `### Sentry Findings\n${results.sentryFindings}\n\n`;
+    comment += `**Sentry:** ${results.sentryFindings}\n\n`;
   }
 
   if (results.awsFindings) {
-    comment += `### AWS Findings\n${results.awsFindings}\n\n`;
+    comment += `**AWS:** ${results.awsFindings}\n\n`;
   }
 
-  comment += `### Assessment\n`;
-  comment += `- **Estimated Complexity:** ${results.estimatedComplexity || "Unknown"}\n`;
-  comment += `- **Low-Hanging Fruit:** ${results.isLowHangingFruit ? "Yes ✅" : "No"}\n`;
+  comment += `**Complexity:** ${results.estimatedComplexity || "unknown"} · `;
+  comment += `**LHF:** ${results.isLowHangingFruit ? "yes ✅" : "no"}`;
   if (results.isLowHangingFruit && results.lowHangingFruitReason) {
-    comment += `- **Reason:** ${results.lowHangingFruitReason}\n`;
+    comment += ` — ${results.lowHangingFruitReason}`;
   }
+  comment += `\n`;
 
   if (results.suggestedFix) {
-    comment += `\n### Suggested Fix\n${results.suggestedFix}\n`;
+    comment += `\n**Fix:** ${results.suggestedFix}\n`;
   }
 
-  if (results.additionalContext) {
-    comment += `\n### Additional Context\n${results.additionalContext}\n`;
-  }
-
-  comment += `\n---\n*Automated investigation by linear-auto-investigate*`;
+  comment += `\n---\n*linear-auto-investigate*`;
   return comment;
 }
 

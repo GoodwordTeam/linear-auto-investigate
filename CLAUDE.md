@@ -46,14 +46,21 @@ strict criteria below. When in doubt, it is NOT low-hanging fruit.
   - RDS/DynamoDB metrics if database-related
   - S3 configurations if storage-related
 
-### 5. Write the Technical Scoping
-Write your findings so a junior engineer can pick this up:
-- **Where to start:** Name the specific file(s) and function(s) to look at first
-- **Current behavior:** Explain what the code does today in plain language
-- **What needs to change:** Describe the required changes at a conceptual level
-- **Gotchas:** Flag any non-obvious dependencies, side effects, or edge cases
-- **Existing patterns:** If there's a similar feature/fix elsewhere in the codebase
-  that can serve as a reference, point to it with file path and brief explanation
+### 5. Write the Technical Scoping — BE TERSE
+The reader is a junior engineer who needs a starting point, not a design doc.
+Do not restate the ticket. Do not pad. Do not speculate. If you don't know
+something, omit it.
+
+Hard length limits:
+- **Where to start:** <=3 sentences. Name the file + function to open first and
+  the single thing to look at.
+- **Technical analysis:** <=4 sentences. Current behavior + the specific gap.
+- **Existing patterns:** one file path + one sentence, or omit.
+- **Relevant files:** <=5 paths, only files the engineer will actually touch.
+- Any other string field: <=2 sentences.
+
+Prefer omitting a field over filling it with filler. Short, specific, and
+concrete beats long and comprehensive.
 
 ### 6. Assess Complexity
 Classify the ticket as:
@@ -64,23 +71,29 @@ Classify the ticket as:
 - **High**: Requires significant refactoring, cross-cutting concerns, or deep
   system knowledge. 200+ lines of changes.
 
-### 7. Determine Low-Hanging Fruit (strict criteria)
-A ticket is low-hanging fruit ONLY if ALL of the following are true:
-- You can identify the exact file(s) and function(s) that need to change
-- The change follows an existing pattern already in the codebase (e.g., adding a
-  field that mirrors an existing field, a UI tweak matching other UI elements)
-- The change does not require new architecture, new dependencies, or database
-  migrations
-- The change is limited to ONE of these categories:
-  - **Simple UX update**: copy change, styling tweak, showing/hiding an existing
-    element, reordering fields
-  - **Straightforward API change**: adding a field to an existing endpoint that
-    follows the same pattern as other fields, adjusting validation rules
-  - **Small feature replicating an existing pattern**: e.g., "add a filter for X"
-    when filters for Y and Z already exist with the same structure
+### 7. Determine Low-Hanging Fruit (extremely strict)
+A ticket is low-hanging fruit ONLY if you are HIGHLY CONFIDENT that the entire
+fix is small, obvious, and contained. All of these must hold:
+- You can point to the exact file(s), function(s), and (ideally) lines to change
+- The change is <20 lines across 1-2 files
+- No new dependencies, no migrations, no new abstractions, no refactors
+- The root cause (for bugs) is clearly identified — not a guess
 
-If any of these are uncertain or you're making assumptions, it is NOT
-low-hanging fruit. Set `isLowHangingFruit` to false.
+The change must fit ONE of these narrow categories:
+- **Simple UX update**: copy, color, styling, or a small isolated component tweak
+- **Missing DTO/controller field**: adding a field to an existing DTO/controller
+  that mirrors sibling fields already there
+- **Small, tightly-scoped backend bug**: obvious root cause, small footprint,
+  the fix is self-evident from reading the surrounding code
+
+Disqualifiers (any one → NOT low-hanging fruit):
+- You're guessing at intent or root cause
+- The fix likely touches >2 files
+- Cross-cutting concerns, shared utilities, or framework-level changes
+- Unclear acceptance criteria
+
+When in doubt: `isLowHangingFruit: false`. A wrong auto-PR is far more costly
+than a human deciding something was simple.
 
 ### 8. Suggest Labels
 Based on your investigation, suggest appropriate labels:

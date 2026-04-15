@@ -74,7 +74,7 @@ async function triggerInvestigation(ticketId, ticketData) {
  * Workflow states that should trigger an investigation.
  * Matches case-insensitively against the Linear state name.
  */
-const TRIGGER_STATES = ["triage", "bug"];
+const TRIGGER_STATES = ["refined"];
 
 /**
  * Check if the issue's current state matches a trigger state
@@ -86,7 +86,7 @@ function isInTriggerState(data) {
 
 /**
  * Determine if a ticket should be investigated.
- * Triggers when an issue is created in or moved to a trigger state (Triage, Bug).
+ * Triggers when an issue is created in or moved to a trigger state (Refined).
  */
 function shouldInvestigate(payload) {
   const { action, data, type } = payload;

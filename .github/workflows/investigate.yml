@@ -63,10 +63,10 @@ jobs:
           cat /tmp/ticket.json >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-          # Check if ticket is in a trigger state (Triage or Bug)
+          # Check if ticket is in a trigger state (Refined)
           TICKET_STATE=$(jq -r '.state // "unknown"' /tmp/ticket.json)
           TICKET_STATE_LOWER=$(echo "$TICKET_STATE" | tr '[:upper:]' '[:lower:]')
-          if [ "$TICKET_STATE_LOWER" = "triage" ] || [ "$TICKET_STATE_LOWER" = "bug" ]; then
+          if [ "$TICKET_STATE_LOWER" = "refined" ]; then
             echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
           else
             echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
@@ -130,29 +130,39 @@ jobs:
 
           ## Your Task
 
-          Investigate this ticket thoroughly following the instructions in CLAUDE.md.
-          The web-app repo is at /tmp/workspace/web-app and the api repo is at /tmp/workspace/api.
+          Investigate this ticket following CLAUDE.md. Web-app: /tmp/workspace/web-app, api: /tmp/workspace/api.
 
-          Your audience is a junior engineer who will pick up this ticket. Write your analysis so they know exactly where to start and what to change.
+          **Be terse.** The reader is a junior engineer who needs a starting point, not a design doc. Do not restate the ticket. Do not speculate. Do not pad. If you don't know something, omit the field.
 
-          Be conservative with the isLowHangingFruit field — only set it to true if the change is a simple UX update, straightforward API change, or small feature that replicates an existing pattern in the codebase. When in doubt, set it to false.
+          **Strict length limits (hard caps):**
+          - startingPoint: <= 3 sentences. Name the file + function to open first and the one thing to change.
+          - technicalAnalysis: <= 4 sentences. Only the current behavior and the specific gap.
+          - existingPatterns: one file path + one sentence, or null.
+          - Any other string: <= 2 sentences.
+          - relevantFiles: <= 5 paths, only files the engineer must actually touch or read.
 
-          After investigation, output your findings as a single JSON object with this exact structure:
+          **isLowHangingFruit — be extremely strict.** Set true ONLY if you are highly confident the ENTIRE fix is obvious and tiny. Qualifying categories:
+          - Copy/color/styling tweak or small isolated UI component change
+          - Adding a missing field to an existing DTO/controller that mirrors sibling fields
+          - A small, tightly-scoped backend bug with an obvious root cause and a <20-line fix in 1-2 files
+
+          Disqualifiers (any of these → false): unclear root cause, >2 files likely touched, new migrations, new dependencies, cross-cutting refactors, any guessing about intent, or you can't point to the exact lines to change. When in doubt: false.
+
+          Output a single JSON object, nothing else:
           \`\`\`json
           {
-            "summary": "Brief summary of findings",
-            "technicalAnalysis": "Detailed technical analysis",
-            "startingPoint": "Where to start: specific file(s), function(s), and what to look at first. Written for a junior engineer.",
-            "relevantFiles": ["list", "of", "relevant", "file", "paths"],
-            "existingPatterns": "If there's a similar feature/fix in the codebase that can serve as a reference, describe it with file paths. null if N/A",
-            "suggestedLabels": ["label1", "label2"],
+            "summary": "One sentence.",
+            "technicalAnalysis": "<= 4 sentences",
+            "startingPoint": "<= 3 sentences, name file:function",
+            "relevantFiles": ["up to 5 paths"],
+            "existingPatterns": "path + 1 sentence, or null",
+            "suggestedLabels": ["label1"],
             "estimatedComplexity": "low|medium|high",
-            "isLowHangingFruit": true/false,
-            "lowHangingFruitReason": "If isLowHangingFruit is true, explain which strict criterion it meets (simple UX update / straightforward API change / replicates existing pattern) and cite the existing pattern. null if not low-hanging fruit.",
-            "suggestedFix": "Description of the fix if low-hanging fruit, null otherwise",
-            "sentryFindings": "Any findings from Sentry investigation, null if N/A",
-            "awsFindings": "Any findings from AWS investigation, null if N/A",
-            "additionalContext": "Any other relevant context"
+            "isLowHangingFruit": false,
+            "lowHangingFruitReason": "null unless true; then name the category + cite exact file/lines",
+            "suggestedFix": "null unless LHF; then <=3 sentences describing the exact change",
+            "sentryFindings": "<=2 sentences or null",
+            "awsFindings": "<=2 sentences or null"
           }
           \`\`\`
           PROMPT_EOF
