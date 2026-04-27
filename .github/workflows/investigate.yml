@@ -63,14 +63,19 @@ jobs:
           cat /tmp/ticket.json >> "$GITHUB_OUTPUT"
           echo "EOF" >> "$GITHUB_OUTPUT"
 
-          # Check if ticket is in a trigger state (Refined)
+          # Check if ticket is in a trigger state (Refined).
+          # Manual workflow_dispatch bypasses this check so we can re-run
+          # investigations on demand without changing the ticket state.
           TICKET_STATE=$(jq -r '.state // "unknown"' /tmp/ticket.json)
           TICKET_STATE_LOWER=$(echo "$TICKET_STATE" | tr '[:upper:]' '[:lower:]')
-          if [ "$TICKET_STATE_LOWER" = "refined" ]; then
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
+            echo "::notice::Manual dispatch — bypassing state check (ticket is in \"$TICKET_STATE\")"
+          elif [ "$TICKET_STATE_LOWER" = "refined" ]; then
             echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
           else
-            echo "in_trigger_state=true" >> "$GITHUB_OUTPUT"
-            echo "::notice::Ticket is in \"$TICKET_STATE\" state — proceeding (triggered via dispatch)"
+            echo "in_trigger_state=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Skipping: ticket is in \"$TICKET_STATE\" state, not Refined"
           fi
 
           # Check if ticket is well-scoped
@@ -83,8 +88,14 @@ jobs:
             echo "::warning::Ticket is not well-scoped: $SKIP_REASON"
           fi
 
+      - name: Skip — not in trigger state
+        if: steps.validate.outputs.in_trigger_state == 'false'
+        run: |
+          echo "Skipping investigation - ticket is not in Refined state."
+          exit 0
+
       - name: Early exit for poorly-scoped tickets
-        if: steps.validate.outputs.well_scoped == 'false'
+        if: steps.validate.outputs.in_trigger_state == 'true' && steps.validate.outputs.well_scoped == 'false'
         run: |
           echo "Skipping investigation - ticket is not well-scoped."
           echo "Reason: ${{ steps.validate.outputs.skip_reason }}"
@@ -92,16 +103,16 @@ jobs:
           node scripts/update-linear.mjs "${{ steps.ticket.outputs.ticket_id }}" --skip "${{ steps.validate.outputs.skip_reason }}"
 
       - name: Setup investigation workspace
-        if: steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.in_trigger_state == 'true' && steps.validate.outputs.well_scoped != 'false'
         run: |
           bash scripts/setup-workspace.sh
 
       - name: Install Claude Code
-        if: steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.in_trigger_state == 'true' && steps.validate.outputs.well_scoped != 'false'
         run: npm install -g @anthropic-ai/claude-code
 
       - name: Run AI investigation
-        if: steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.in_trigger_state == 'true' && steps.validate.outputs.well_scoped != 'false'
         id: investigate
         run: |
           TICKET_DATA=$(cat /tmp/ticket.json)
@@ -179,14 +190,14 @@ jobs:
           cat /tmp/investigation-result.json
 
       - name: Update Linear with findings
-        if: steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.in_trigger_state == 'true' && steps.validate.outputs.well_scoped != 'false'
         run: |
           node scripts/update-linear.mjs \
             "${{ steps.ticket.outputs.ticket_id }}" \
             --results /tmp/investigation-result.json
 
       - name: Create draft PR if low-hanging fruit
-        if: steps.validate.outputs.well_scoped != 'false'
+        if: steps.validate.outputs.in_trigger_state == 'true' && steps.validate.outputs.well_scoped != 'false'
         id: draft_pr
         run: |
           # Check if the investigation result contains isLowHangingFruit: true
