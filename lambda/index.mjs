@@ -26,7 +26,7 @@ function verifySignature(body, signature) {
   return crypto.timingSafeEqual(Buffer.from(signature), Buffer.from(expected));
 }
 
-const TRIGGER_STATES = ["triage", "bug"];
+const TRIGGER_STATES = ["refined"];
 
 function isInTriggerState(data) {
   const stateName = (data.state?.name || "").toLowerCase();
